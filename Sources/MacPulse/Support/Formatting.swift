@@ -5,6 +5,17 @@ enum Formatting {
         String(format: "%.\(decimals)f%%", value)
     }
 
+    static func watts(_ value: Double, compact: Bool = false) -> String {
+        let rendered: String
+        if abs(value.rounded() - value) < 0.15 {
+            rendered = String(format: "%.0f", value)
+        } else {
+            rendered = String(format: "%.1f", value)
+        }
+
+        return compact ? "\(rendered)Вт" : "\(rendered) Вт"
+    }
+
     static func temperature(_ value: Double) -> String {
         String(format: "%.0fC", value)
     }

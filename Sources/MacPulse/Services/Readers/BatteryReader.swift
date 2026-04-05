@@ -22,14 +22,24 @@ struct BatteryReader {
             ?? number(from: smartBattery?["NominalChargeCapacity"])
         let healthPercent = healthPercent(maxCapacity: maxCapacity, designCapacity: designCapacity)
         let wearPercent = healthPercent.map { max(0, 100 - $0) }
-        let timeRemaining = batteryTimeRemaining(from: powerSource, smartBattery: smartBattery)
+        let timeToFullCharge = batteryTimeToFullCharge(from: powerSource, smartBattery: smartBattery)
+        let timeToEmpty = batteryTimeToEmpty(from: powerSource, smartBattery: smartBattery)
+        let timeRemaining = isCharging ? (timeToFullCharge ?? timeToEmpty) : (timeToEmpty ?? timeToFullCharge)
         let temperatureCelsius = smartBattery.flatMap { properties in
             if let rawTemperature = number(from: properties["Temperature"]) {
                 return rawTemperature / 100
             }
             return nil
         }
-        let powerSourceName = makePowerSourceName(isCharging: isCharging, isConnectedToPower: isConnectedToPower)
+        let adapterPowerWatts = adapterPowerWatts(from: smartBattery)
+        let powerFlowWatts = powerFlowWatts(from: smartBattery)
+        let powerSourceName = makePowerSourceName(
+            isCharging: isCharging,
+            isConnectedToPower: isConnectedToPower,
+            adapterPowerWatts: adapterPowerWatts,
+            powerFlowWatts: powerFlowWatts,
+            percentage: percentage
+        )
 
         return BatteryStats(
             percentage: percentage,
@@ -39,8 +49,12 @@ struct BatteryReader {
             healthPercent: healthPercent,
             wearPercent: wearPercent,
             timeRemainingMinutes: timeRemaining,
+            timeToFullChargeMinutes: timeToFullCharge,
+            timeToEmptyMinutes: timeToEmpty,
             temperatureCelsius: temperatureCelsius,
-            powerSourceName: powerSourceName
+            powerSourceName: powerSourceName,
+            adapterPowerWatts: adapterPowerWatts,
+            powerFlowWatts: powerFlowWatts
         )
     }
 
@@ -94,17 +108,76 @@ struct BatteryReader {
         return 0
     }
 
-    private func batteryTimeRemaining(from powerSource: [String: Any]?, smartBattery: [String: Any]?) -> Int? {
+    private func batteryTimeToEmpty(from powerSource: [String: Any]?, smartBattery: [String: Any]?) -> Int? {
         if let timeToEmpty = powerSource?[kIOPSTimeToEmptyKey as String] as? Int, timeToEmpty > 0 {
             return timeToEmpty
         }
 
+        if let average = sanitizedTimeEstimate(from: smartBattery?["AvgTimeToEmpty"]) {
+            return average
+        }
+
+        if let fallback = sanitizedTimeEstimate(from: smartBattery?["TimeRemaining"]) {
+            return fallback
+        }
+
+        return nil
+    }
+
+    private func batteryTimeToFullCharge(from powerSource: [String: Any]?, smartBattery: [String: Any]?) -> Int? {
         if let timeToFull = powerSource?[kIOPSTimeToFullChargeKey as String] as? Int, timeToFull > 0 {
             return timeToFull
         }
 
-        if let fallback = smartBattery?["TimeRemaining"] as? Int, fallback > 0 {
+        if let average = sanitizedTimeEstimate(from: smartBattery?["AvgTimeToFull"]) {
+            return average
+        }
+
+        if let fallback = sanitizedTimeEstimate(from: smartBattery?["TimeRemaining"]) {
             return fallback
+        }
+
+        return nil
+    }
+
+    private func adapterPowerWatts(from smartBattery: [String: Any]?) -> Double? {
+        number(from: adapterDetailsValue(named: "Watts", smartBattery: smartBattery))
+            ?? number(from: adapterDetailsValue(named: "AdapterPower", smartBattery: smartBattery))
+    }
+
+    private func powerFlowWatts(from smartBattery: [String: Any]?) -> Double? {
+        guard
+            let amperage = number(from: smartBattery?["InstantAmperage"]) ?? number(from: smartBattery?["Amperage"]),
+            let voltage = number(from: smartBattery?["Voltage"]) ?? number(from: smartBattery?["AppleRawBatteryVoltage"]),
+            voltage > 0
+        else {
+            return nil
+        }
+
+        let watts = abs(amperage * voltage) / 1_000_000
+        return watts > 0.05 ? watts : nil
+    }
+
+    private func adapterDetailsValue(named key: String, smartBattery: [String: Any]?) -> Any? {
+        guard let smartBattery else { return nil }
+
+        let candidates = [
+            smartBattery["AdapterDetails"],
+            smartBattery["AppleRawAdapterDetails"],
+        ]
+
+        for candidate in candidates {
+            if let dictionary = candidate as? [String: Any], let value = dictionary[key] {
+                return value
+            }
+
+            if let array = candidate as? [Any] {
+                for item in array {
+                    if let dictionary = item as? [String: Any], let value = dictionary[key] {
+                        return value
+                    }
+                }
+            }
         }
 
         return nil
@@ -123,14 +196,48 @@ struct BatteryReader {
         return (maxCapacity / designCapacity) * 100
     }
 
-    private func makePowerSourceName(isCharging: Bool, isConnectedToPower: Bool) -> String {
+    private func makePowerSourceName(
+        isCharging: Bool,
+        isConnectedToPower: Bool,
+        adapterPowerWatts: Double?,
+        powerFlowWatts: Double?,
+        percentage: Double
+    ) -> String {
+        let powerDescription = (isConnectedToPower ? adapterPowerWatts : powerFlowWatts).map { watts in
+            Formatting.watts(watts)
+        }
+
         if isCharging {
-            return "Зарядка"
+            if let powerDescription {
+                return "Заряжается • \(powerDescription)"
+            }
+            return "Заряжается"
         }
         if isConnectedToPower {
+            if percentage >= 99 {
+                if let powerDescription {
+                    return "Полный заряд • \(powerDescription)"
+                }
+                return "Полный заряд"
+            }
+
+            if let powerDescription {
+                return "От адаптера • \(powerDescription)"
+            }
             return "От адаптера"
         }
+        if let powerFlowWatts {
+            return "От батареи • \(Formatting.watts(powerFlowWatts))"
+        }
         return "От батареи"
+    }
+
+    private func sanitizedTimeEstimate(from value: Any?) -> Int? {
+        guard let minutes = number(from: value).map(Int.init), minutes > 0, minutes < 65_000 else {
+            return nil
+        }
+
+        return minutes
     }
 
     private func number(from value: Any?) -> Double? {

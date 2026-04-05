@@ -147,10 +147,10 @@ struct MenuBarDashboardView: View {
         if let battery = monitor.snapshot.battery {
             metrics.append(
                 CompactPopoverMetric(
-                    title: "Батарея",
-                    compactTitle: "Бат.",
-                    value: Formatting.percent(battery.percentage),
-                    icon: battery.isCharging ? "bolt.batteryblock" : "battery.75"
+                    title: battery.statusTitle,
+                    compactTitle: battery.isCharging ? "Заряд" : "Бат.",
+                    value: battery.compactIndicatorValue,
+                    icon: battery.statusSymbolName
                 )
             )
         }

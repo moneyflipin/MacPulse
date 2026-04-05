@@ -361,7 +361,9 @@ enum ProductIntelligence {
         let battery = snapshot.battery.map {
             let cycles = $0.cycleCount.map(String.init) ?? "нет"
             let wear = $0.wearPercent.map { Formatting.percent($0, decimals: 0) } ?? "нет"
-            return "Battery: \(Formatting.percent($0.percentage)), \($0.healthState), циклы \(cycles), износ \(wear)"
+            let power = $0.powerLabel ?? "питание не определено"
+            let time = $0.timeEstimateLabel ?? "время не определено"
+            return "Battery: \(Formatting.percent($0.percentage)), \($0.statusTitle), \(power), \(time), циклы \(cycles), износ \(wear)"
         } ?? "Battery: нет встроенной батареи"
 
         let insightsBlock = insights.map { "- [\($0.severity.title)] \($0.title): \($0.summary)" }.joined(separator: "\n")

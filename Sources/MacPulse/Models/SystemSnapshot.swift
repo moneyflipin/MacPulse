@@ -258,8 +258,12 @@ struct BatteryStats: Sendable {
     let healthPercent: Double?
     let wearPercent: Double?
     let timeRemainingMinutes: Int?
+    let timeToFullChargeMinutes: Int?
+    let timeToEmptyMinutes: Int?
     let temperatureCelsius: Double?
     let powerSourceName: String
+    let adapterPowerWatts: Double?
+    let powerFlowWatts: Double?
 
     var healthState: String {
         if let wearPercent, wearPercent > 20 {
@@ -269,6 +273,91 @@ struct BatteryStats: Sendable {
             return "Заряжается"
         }
         return "Нормально"
+    }
+
+    var statusTitle: String {
+        if isCharging {
+            return "Заряжается"
+        }
+        if isConnectedToPower {
+            return percentage >= 99 ? "Полный заряд" : "От адаптера"
+        }
+        return "От батареи"
+    }
+
+    var statusSymbolName: String {
+        if isCharging {
+            return "bolt.batteryblock"
+        }
+        if isConnectedToPower {
+            return "powerplug"
+        }
+        return "battery.75"
+    }
+
+    var displayPowerWatts: Double? {
+        if isConnectedToPower {
+            return adapterPowerWatts ?? powerFlowWatts
+        }
+        return powerFlowWatts
+    }
+
+    var powerLabel: String? {
+        guard let displayPowerWatts else { return nil }
+
+        if isConnectedToPower, let adapterPowerWatts {
+            return "Адаптер \(Formatting.watts(adapterPowerWatts))"
+        }
+
+        if isCharging {
+            return "Заряд \(Formatting.watts(displayPowerWatts))"
+        }
+
+        if isConnectedToPower {
+            return "Питание \(Formatting.watts(displayPowerWatts))"
+        }
+
+        return "Расход \(Formatting.watts(displayPowerWatts))"
+    }
+
+    var compactPowerLabel: String? {
+        displayPowerWatts.map { Formatting.watts($0, compact: true) }
+    }
+
+    var timeEstimateMinutes: Int? {
+        if isCharging {
+            return timeToFullChargeMinutes ?? timeRemainingMinutes
+        }
+        if !isConnectedToPower {
+            return timeToEmptyMinutes ?? timeRemainingMinutes
+        }
+        return timeRemainingMinutes
+    }
+
+    var timeEstimateLabel: String? {
+        guard let rendered = Formatting.relativeBatteryTime(timeEstimateMinutes) else {
+            return nil
+        }
+
+        if isCharging {
+            return "До полной \(rendered)"
+        }
+
+        if !isConnectedToPower {
+            return "До разрядки \(rendered)"
+        }
+
+        return "Еще \(rendered)"
+    }
+
+    var compactIndicatorValue: String {
+        var parts = [Formatting.percent(percentage)]
+
+        if let compactPowerLabel {
+            parts.append(compactPowerLabel)
+        }
+
+        return parts.joined(separator: " ")
     }
 }
 

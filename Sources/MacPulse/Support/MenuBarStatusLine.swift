@@ -35,7 +35,7 @@ enum MenuBarStatusLineComposer {
                 MenuBarSegmentDescriptor(icon: "memorychip", value: Formatting.percent(snapshot.memory.usagePercent)),
             ]
             if let battery = snapshot.battery {
-                result.append(MenuBarSegmentDescriptor(icon: battery.isCharging ? "bolt.batteryblock" : "battery.75", value: Formatting.percent(battery.percentage)))
+                result.append(batterySegment(for: battery))
             }
             return result
         }
@@ -46,11 +46,11 @@ enum MenuBarStatusLineComposer {
 
         switch configuration.menuBarDisplayStyle {
         case .iconsAndText:
-            return max(48, count * 44)
+            return max(48, count * 62)
         case .iconsOnly:
             return max(28, count * 18)
         case .textOnly:
-            return max(36, count * 30)
+            return max(36, count * 42)
         }
     }
 
@@ -146,7 +146,7 @@ enum MenuBarStatusLineComposer {
                 result.append(MenuBarSegmentDescriptor(icon: "thermometer.medium", value: Formatting.temperature(temperature)))
             }
             if let battery = snapshot.battery {
-                result.append(MenuBarSegmentDescriptor(icon: battery.isCharging ? "bolt.batteryblock" : "battery.75", value: Formatting.percent(battery.percentage)))
+                result.append(batterySegment(for: battery))
             }
         case .detailed:
             result.append(MenuBarSegmentDescriptor(icon: "memorychip", value: Formatting.percent(snapshot.memory.usagePercent)))
@@ -154,11 +154,18 @@ enum MenuBarStatusLineComposer {
                 result.append(MenuBarSegmentDescriptor(icon: "thermometer.medium", value: Formatting.temperature(temperature)))
             }
             if let battery = snapshot.battery {
-                result.append(MenuBarSegmentDescriptor(icon: battery.isCharging ? "bolt.batteryblock" : "battery.75", value: Formatting.percent(battery.percentage)))
+                result.append(batterySegment(for: battery))
             }
         }
 
         return result
+    }
+
+    private static func batterySegment(for battery: BatteryStats) -> MenuBarSegmentDescriptor {
+        MenuBarSegmentDescriptor(
+            icon: battery.statusSymbolName,
+            value: battery.compactIndicatorValue
+        )
     }
 
     private static func expectedSegmentCount(for configuration: AppConfiguration) -> Int {

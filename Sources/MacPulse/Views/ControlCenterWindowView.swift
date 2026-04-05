@@ -222,7 +222,7 @@ struct ControlCenterWindowView: View {
                 summaryBadge(monitor.snapshot.memory.pressureLevel.title)
                 summaryBadge(isAwaitingFirstSnapshot ? "Подключаемся" : monitor.snapshot.thermal.condition.title)
                 if let battery = monitor.snapshot.battery {
-                    summaryBadge("Батарея \(liveValue(Formatting.percent(battery.percentage)))")
+                    summaryBadge(batterySummaryBadgeText(for: battery))
                 }
             }
 
@@ -541,18 +541,8 @@ struct ControlCenterWindowView: View {
     }
 
     private var batteryView: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            guard let battery = monitor.snapshot.battery else {
-                return AnyView(
-                    sectionSurface(title: "Батарея", subtitle: "На этом Mac не удалось получить данные батареи") {
-                        Text("Встроенная батарея недоступна или отсутствует.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                )
-            }
-
-            return AnyView(
+        Group {
+            if let battery = monitor.snapshot.battery {
                 VStack(alignment: .leading, spacing: 16) {
                     if let coach = batteryCoach {
                         sectionSurface(title: "Battery Coach", subtitle: coach.summary) {
@@ -591,15 +581,33 @@ struct ControlCenterWindowView: View {
                         }
                     }
 
-                    sectionSurface(title: "Показатели батареи", subtitle: "Заряд, ресурс, циклы и температура") {
+                    sectionSurface(title: "Показатели батареи", subtitle: "Заряд, питание, время до полной зарядки и здоровье батареи") {
                         LazyVGrid(columns: overviewColumns, spacing: 14) {
                             MetricCard(
-                                title: "Заряд",
+                                title: battery.isCharging ? "Зарядка" : "Заряд",
                                 value: Formatting.percent(battery.percentage),
                                 subtitle: battery.powerSourceName,
-                                footnote: battery.timeRemainingMinutes.flatMap(Formatting.relativeBatteryTime) ?? "Время пока не определено",
+                                footnote: battery.timeEstimateLabel ?? "Время пока не определено",
                                 tint: .pink,
                                 progress: Formatting.progress(from: battery.percentage)
+                            )
+
+                            MetricCard(
+                                title: "Питание",
+                                value: battery.displayPowerWatts.map { Formatting.watts($0) } ?? "нет",
+                                subtitle: batteryPowerSubtitle(for: battery),
+                                footnote: batteryPowerFootnote(for: battery),
+                                tint: .blue,
+                                progress: nil
+                            )
+
+                            MetricCard(
+                                title: battery.isCharging ? "До полной" : "Автономность",
+                                value: Formatting.relativeBatteryTime(battery.timeEstimateMinutes) ?? "нет",
+                                subtitle: batteryTimeSubtitle(for: battery),
+                                footnote: batteryTimeFootnote(for: battery),
+                                tint: .orange,
+                                progress: nil
                             )
 
                             MetricCard(
@@ -613,7 +621,13 @@ struct ControlCenterWindowView: View {
                         }
                     }
                 }
-            )
+            } else {
+                sectionSurface(title: "Батарея", subtitle: "На этом Mac не удалось получить данные батареи") {
+                    Text("Встроенная батарея недоступна или отсутствует.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -1129,7 +1143,11 @@ struct ControlCenterWindowView: View {
     }
 
     private func batteryFootnote(for battery: BatteryStats) -> String {
-        var parts: [String] = [battery.healthState]
+        var parts: [String] = []
+
+        if let timeEstimateLabel = battery.timeEstimateLabel {
+            parts.append(timeEstimateLabel)
+        }
 
         if let health = battery.healthPercent {
             parts.append("Ресурс \(String(format: "%.1f%%", health))")
@@ -1143,15 +1161,83 @@ struct ControlCenterWindowView: View {
             parts.append("\(cycleCount) циклов")
         }
 
-        if let timeRemaining = Formatting.relativeBatteryTime(battery.timeRemainingMinutes) {
-            parts.append(timeRemaining)
-        }
-
         if let temperature = battery.temperatureCelsius {
             parts.append(Formatting.temperature(temperature))
         }
 
-        return parts.joined(separator: " • ")
+        return parts.isEmpty ? battery.statusTitle : parts.joined(separator: " • ")
+    }
+
+    private func batterySummaryBadgeText(for battery: BatteryStats) -> String {
+        var parts = [battery.isCharging ? "Зарядка" : "Батарея", liveValue(Formatting.percent(battery.percentage))]
+
+        if let compactPowerLabel = battery.compactPowerLabel {
+            parts.append(compactPowerLabel)
+        }
+
+        return parts.joined(separator: " ")
+    }
+
+    private func batteryPowerSubtitle(for battery: BatteryStats) -> String {
+        if battery.isConnectedToPower, let adapterPowerWatts = battery.adapterPowerWatts {
+            return "Адаптер \(Formatting.watts(adapterPowerWatts))"
+        }
+
+        if battery.isCharging {
+            return "Мощность, идущая в батарею"
+        }
+
+        if battery.isConnectedToPower {
+            return "Питание от сети"
+        }
+
+        return "Текущий расход Mac"
+    }
+
+    private func batteryPowerFootnote(for battery: BatteryStats) -> String {
+        var parts: [String] = []
+
+        if
+            battery.isConnectedToPower,
+            let adapterPowerWatts = battery.adapterPowerWatts,
+            let powerFlowWatts = battery.powerFlowWatts,
+            abs(adapterPowerWatts - powerFlowWatts) > 0.2
+        {
+            let flowLabel = battery.isCharging ? "В батарею сейчас идет \(Formatting.watts(powerFlowWatts))" : "Сейчас используется \(Formatting.watts(powerFlowWatts))"
+            parts.append(flowLabel)
+        } else if let powerLabel = battery.powerLabel {
+            parts.append(powerLabel)
+        }
+
+        if let timeEstimateLabel = battery.timeEstimateLabel {
+            parts.append(timeEstimateLabel)
+        }
+
+        return parts.isEmpty ? "Питание пока не определено" : parts.joined(separator: " • ")
+    }
+
+    private func batteryTimeSubtitle(for battery: BatteryStats) -> String {
+        if battery.isCharging {
+            return "Оценка до 100%"
+        }
+
+        if battery.isConnectedToPower {
+            return "Сейчас Mac питается от сети"
+        }
+
+        return "Оценка до разрядки"
+    }
+
+    private func batteryTimeFootnote(for battery: BatteryStats) -> String {
+        if let timeEstimateLabel = battery.timeEstimateLabel {
+            return timeEstimateLabel
+        }
+
+        if battery.isConnectedToPower {
+            return "Заряд сейчас не растет, поэтому времени до полной зарядки нет."
+        }
+
+        return "macOS пока не дала расчет времени"
     }
 
     private func average(_ values: [Double]) -> Double? {
