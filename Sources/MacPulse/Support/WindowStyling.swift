@@ -24,26 +24,38 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 }
 
-private struct WindowConfigurator: NSViewRepresentable {
+struct WindowConfigurator: NSViewRepresentable {
     let configure: (NSWindow) -> Void
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-
-        DispatchQueue.main.async {
-            if let window = view.window {
-                configure(window)
-            }
-        }
-
+        let view = ConfiguringView()
+        view.configure = configure
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            if let window = view.window {
-                configure(window)
-            }
+        guard let view = view as? ConfiguringView else { return }
+        view.configure = configure
+        view.configureIfNeeded()
+    }
+
+    private final class ConfiguringView: NSView {
+        var configure: ((NSWindow) -> Void)?
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            super.viewWillMove(toWindow: newWindow)
+            guard let newWindow, let configure else { return }
+            configure(newWindow)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configureIfNeeded()
+        }
+
+        func configureIfNeeded() {
+            guard let window, let configure else { return }
+            configure(window)
         }
     }
 }

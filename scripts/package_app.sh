@@ -12,6 +12,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PLIST_TEMPLATE="$ROOT_DIR/Packaging/Info.plist"
 EXECUTABLE="$BUILD_DIR/arm64-apple-macosx/release/MacPulse"
+APP_ICON="$ROOT_DIR/Packaging/AppIcon.icns"
 
 VERSION="${1:-1.0.0}"
 BUILD_NUMBER="${2:-1}"
@@ -33,6 +34,10 @@ fi
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/MacPulse"
 cp "$PLIST_TEMPLATE" "$CONTENTS_DIR/Info.plist"
+
+if [[ -f "$APP_ICON" ]]; then
+    cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
+fi
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS_DIR/Info.plist"

@@ -16,4 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windowRouter: windowRouter
         )
     }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 }

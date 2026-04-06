@@ -51,6 +51,8 @@ final class SystemMonitor: ObservableObject {
     @Published private(set) var appProfiles: [AppResourceProfile] = []
 
     private let preferences: AppPreferences
+    private let historyStore: HistoryPersistenceStore
+    private let notificationCoordinator: NotificationCoordinator
     private let pipeline = MetricsPipeline()
     private var refreshTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -58,11 +60,19 @@ final class SystemMonitor: ObservableObject {
     private let maxEvents = 160
     private var lastSnapshotForEvents: SystemSnapshot?
     private var profileStore: [String: AppProfileAccumulator] = [:]
+    private var lastPersistedAt: Date?
 
-    init(preferences: AppPreferences) {
+    init(
+        preferences: AppPreferences,
+        historyStore: HistoryPersistenceStore = HistoryPersistenceStore(),
+        notificationCoordinator: NotificationCoordinator
+    ) {
         self.preferences = preferences
+        self.historyStore = historyStore
+        self.notificationCoordinator = notificationCoordinator
 
         Task(priority: .utility) { @MainActor [weak self] in
+            await self?.restorePersistedState()
             self?.start()
         }
 
@@ -144,13 +154,14 @@ final class SystemMonitor: ObservableObject {
         ProductIntelligence.cleanupHelpers(snapshot: snapshot, profiles: appProfiles)
     }
 
-    func makeHealthReport() -> String {
+    func makeHealthReport(format: ReportExportFormat? = nil) -> String {
         ProductIntelligence.report(
             snapshot: snapshot,
             configuration: preferences.configuration,
             insights: insights,
             profiles: appProfiles,
-            events: eventHistory(for: preferences.configuration.trendWindow)
+            events: eventHistory(for: preferences.configuration.trendWindow),
+            format: format ?? preferences.configuration.reportExportFormat
         )
     }
 
@@ -183,6 +194,8 @@ final class SystemMonitor: ObservableObject {
         if history.count > maxHistorySamples {
             history.removeFirst(history.count - maxHistorySamples)
         }
+
+        persistIfNeeded(force: false)
     }
 
     private func bootstrapInitialSnapshot() async {
@@ -285,19 +298,50 @@ final class SystemMonitor: ObservableObject {
     }
 
     private func appendEvent(title: String, detail: String, severity: InsightSeverity, systemImage: String) {
-        events.insert(
-            SystemEvent(
-                timestamp: snapshot.timestamp,
-                title: title,
-                detail: detail,
-                severity: severity,
-                systemImage: systemImage
-            ),
-            at: 0
+        let event = SystemEvent(
+            timestamp: snapshot.timestamp,
+            title: title,
+            detail: detail,
+            severity: severity,
+            systemImage: systemImage
         )
+
+        events.insert(event, at: 0)
 
         if events.count > maxEvents {
             events.removeLast(events.count - maxEvents)
+        }
+
+        Task { [notificationCoordinator, preferences] in
+            await notificationCoordinator.sendNotification(
+                for: event,
+                enabled: preferences.configuration.notificationsEnabled
+            )
+        }
+
+        persistIfNeeded(force: true)
+    }
+
+    private func restorePersistedState() async {
+        guard let persistedState = await historyStore.load() else { return }
+
+        history = Array(persistedState.history.suffix(maxHistorySamples))
+        events = Array(persistedState.events.prefix(maxEvents))
+        lastPersistedAt = .now
+    }
+
+    private func persistIfNeeded(force: Bool) {
+        let now = Date()
+        if !force, let lastPersistedAt, now.timeIntervalSince(lastPersistedAt) < 20 {
+            return
+        }
+
+        lastPersistedAt = now
+        let currentHistory = history
+        let currentEvents = events
+
+        Task.detached(priority: .utility) { [historyStore] in
+            await historyStore.save(history: currentHistory, events: currentEvents)
         }
     }
 }

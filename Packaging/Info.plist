@@ -8,6 +8,8 @@
     <string>MacPulse</string>
     <key>CFBundleExecutable</key>
     <string>MacPulse</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.macpulse.app</string>
     <key>CFBundleInfoDictionaryVersion</key>

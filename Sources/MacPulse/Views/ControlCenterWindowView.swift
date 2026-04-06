@@ -7,6 +7,7 @@ private enum ControlCenterSection: String, CaseIterable, Identifiable {
     case trends
     case processes
     case battery
+    case app
     case menuBar
     case sensors
     case appearance
@@ -25,8 +26,10 @@ private enum ControlCenterSection: String, CaseIterable, Identifiable {
             "Процессы"
         case .battery:
             "Батарея"
+        case .app:
+            "Приложение"
         case .menuBar:
-            "Menu Bar"
+            "Строка меню"
         case .sensors:
             "Сенсоры"
         case .appearance:
@@ -46,6 +49,8 @@ private enum ControlCenterSection: String, CaseIterable, Identifiable {
             "Нагрузка по приложениям и профили"
         case .battery:
             "Здоровье батареи и рекомендации"
+        case .app:
+            "Автозапуск, уведомления и первый запуск"
         case .menuBar:
             "Что видеть в верхней строке"
         case .sensors:
@@ -67,6 +72,8 @@ private enum ControlCenterSection: String, CaseIterable, Identifiable {
             "list.bullet.rectangle"
         case .battery:
             "battery.100percent"
+        case .app:
+            "app.badge"
         case .menuBar:
             "menubar.rectangle"
         case .sensors:
@@ -80,9 +87,13 @@ private enum ControlCenterSection: String, CaseIterable, Identifiable {
 struct ControlCenterWindowView: View {
     @ObservedObject var monitor: SystemMonitor
     @ObservedObject var preferences: AppPreferences
+    @ObservedObject var notificationCoordinator: NotificationCoordinator
+    @ObservedObject var launchAtLoginController: LaunchAtLoginController
 
     @State private var selection: ControlCenterSection? = .overview
     @State private var processPendingTermination: ProcessResource?
+    @State private var showOnboarding = false
+    @State private var showAboutSheet = false
 
     private let overviewColumns = [
         GridItem(.flexible(), spacing: 14),
@@ -99,9 +110,22 @@ struct ControlCenterWindowView: View {
         .background(VisualEffectBackground(material: .windowBackground))
         .preferredColorScheme(preferences.configuration.appearanceMode.colorScheme)
         .macPulseWindowStyle()
-        .onAppear(perform: ensureSelection)
+        .onAppear(perform: handleAppear)
         .onChange(of: preferences.configuration.experienceMode) { _, _ in
             ensureSelection()
+        }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingSheetView(
+                preferences: preferences,
+                notificationCoordinator: notificationCoordinator,
+                launchAtLoginController: launchAtLoginController
+            ) {
+                showOnboarding = false
+            }
+        }
+        .sheet(isPresented: $showAboutSheet) {
+            AboutWindowView()
+                .frame(minWidth: 660, minHeight: 700)
         }
         .alert(
             "Мягко завершить \(processPendingTermination?.name ?? "приложение")?",
@@ -183,7 +207,7 @@ struct ControlCenterWindowView: View {
                     Text("MacPulse")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
 
-                    Text("Центр управления menu bar монитором")
+                    Text("Центр управления мониторингом Mac в строке меню")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -192,7 +216,17 @@ struct ControlCenterWindowView: View {
 
                 HStack(spacing: 8) {
                     Button {
-                        _ = SystemActionCenter.exportReport(monitor.makeHealthReport())
+                        showAboutSheet = true
+                    } label: {
+                        Label("О приложении", systemImage: "info.circle")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        _ = SystemActionCenter.exportReport(
+                            monitor.makeHealthReport(),
+                            format: preferences.configuration.reportExportFormat
+                        )
                     } label: {
                         Label("Экспорт", systemImage: "square.and.arrow.up")
                     }
@@ -219,8 +253,12 @@ struct ControlCenterWindowView: View {
             HStack(spacing: 8) {
                 summaryBadge("CPU \(liveValue(Formatting.percent(monitor.snapshot.cpu.usagePercent)))")
                 summaryBadge("Память \(liveValue(Formatting.percent(monitor.snapshot.memory.usagePercent)))")
-                summaryBadge(monitor.snapshot.memory.pressureLevel.title)
-                summaryBadge(isAwaitingFirstSnapshot ? "Подключаемся" : monitor.snapshot.thermal.condition.title)
+                if let memoryStatusBadgeTitle {
+                    summaryBadge(memoryStatusBadgeTitle, tint: memoryTint)
+                }
+                if let thermalStatusBadgeTitle {
+                    summaryBadge(thermalStatusBadgeTitle, tint: thermalTint)
+                }
                 if let battery = monitor.snapshot.battery {
                     summaryBadge(batterySummaryBadgeText(for: battery))
                 }
@@ -257,6 +295,8 @@ struct ControlCenterWindowView: View {
             processesView
         case .battery:
             batteryView
+        case .app:
+            appView
         case .menuBar:
             menuBarView
         case .sensors:
@@ -326,7 +366,7 @@ struct ControlCenterWindowView: View {
                         value: monitor.activeRefreshDescription,
                         subtitle: preferences.configuration.refreshRate.title,
                         footnote: preferences.configuration.adaptiveRefresh
-                            ? "Частота корректируется на батарее и в low power mode"
+                            ? "Частота корректируется на батарее и в режиме энергосбережения"
                             : "Фиксированная частота обновления",
                         tint: .gray,
                         progress: nil
@@ -334,11 +374,11 @@ struct ControlCenterWindowView: View {
                 }
             }
 
-            sectionSurface(title: "Smart Insights", subtitle: "Сейчас происходит не просто набор цифр, а понятная картина состояния Mac") {
+            sectionSurface(title: "Умные выводы", subtitle: "Сейчас происходит не просто набор цифр, а понятная картина состояния Mac") {
                 insightRows(monitor.insights)
             }
 
-            sectionSurface(title: "Быстрые helpers", subtitle: "Безопасные действия, которые помогают быстро разобраться с нагрузкой") {
+            sectionSurface(title: "Быстрые действия", subtitle: "Безопасные действия, которые помогают быстро разобраться с нагрузкой") {
                 cleanupHelperGrid
             }
 
@@ -354,7 +394,7 @@ struct ControlCenterWindowView: View {
                     )
 
                     MetricCard(
-                        title: "Wired",
+                        title: "Системная",
                         value: liveBytes(monitor.snapshot.memory.wiredBytes),
                         subtitle: "Системная несбрасываемая память",
                         footnote: "Часть памяти, которую macOS старается не выгружать",
@@ -375,7 +415,7 @@ struct ControlCenterWindowView: View {
                         title: "Swap",
                         value: liveBytes(monitor.snapshot.memory.swapUsedBytes),
                         subtitle: "Диск как расширение RAM",
-                        footnote: "Pressure: \(monitor.snapshot.memory.pressureLevel.title)",
+                        footnote: "Давление памяти: \(monitor.snapshot.memory.pressureLevel.title.lowercased())",
                         tint: memoryTint,
                         progress: Formatting.progress(from: monitor.snapshot.memory.swapUsagePercent)
                     )
@@ -395,7 +435,7 @@ struct ControlCenterWindowView: View {
 
                 ProcessTable(
                     title: "Лидеры по памяти",
-                    subtitle: "Процессы с самым большим resident memory footprint",
+                    subtitle: "Процессы, которые занимают больше всего оперативной памяти",
                     processes: monitor.snapshot.processes.topMemory,
                     onOpenInMonitor: { SystemActionCenter.openActivityMonitor() },
                     onActivate: { _ = SystemActionCenter.activate(process: $0) },
@@ -414,7 +454,7 @@ struct ControlCenterWindowView: View {
                 insightRows(monitor.insights)
             }
 
-            sectionSurface(title: "One-click cleanup", subtitle: "Только безопасные и полезные действия без агрессивной очистки") {
+            sectionSurface(title: "Быстрые безопасные действия", subtitle: "Только полезные шаги без агрессивной очистки и лишнего риска") {
                 cleanupHelperGrid
             }
 
@@ -545,7 +585,7 @@ struct ControlCenterWindowView: View {
             if let battery = monitor.snapshot.battery {
                 VStack(alignment: .leading, spacing: 16) {
                     if let coach = batteryCoach {
-                        sectionSurface(title: "Battery Coach", subtitle: coach.summary) {
+                        sectionSurface(title: "Состояние батареи", subtitle: coach.summary) {
                             LazyVGrid(columns: overviewColumns, spacing: 14) {
                                 MetricCard(
                                     title: coach.headline,
@@ -627,6 +667,91 @@ struct ControlCenterWindowView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+
+    private var appView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionSurface(title: "Первый запуск и поведение", subtitle: "Эти настройки делают MacPulse более системным и удобным") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Запускать MacPulse при входе в систему", isOn: launchAtLoginBinding)
+
+                    if launchAtLoginController.state == .requiresApproval {
+                        HStack(spacing: 10) {
+                            Text(launchAtLoginController.state.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            Button("Открыть объекты входа") {
+                                launchAtLoginController.openSystemSettings()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    } else {
+                        Text(launchAtLoginController.state.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Toggle("Показывать центр управления при запуске приложения", isOn: preferences.binding(\.showControlCenterOnLaunch))
+
+                    Text("Если автозапуск включен, удобнее оставить окно скрытым при старте и пользоваться только строкой меню.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            sectionSurface(title: "Уведомления и отчеты", subtitle: "Важные системные алерты и экспорт снимка здоровья Mac") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Включить системные уведомления MacPulse", isOn: notificationBinding)
+
+                    HStack(spacing: 10) {
+                        Text(notificationCoordinator.authorizationState.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        if notificationCoordinator.authorizationState == .denied {
+                            Button("Открыть настройки уведомлений") {
+                                notificationCoordinator.openSystemNotificationSettings()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Picker("Формат отчета", selection: preferences.binding(\.reportExportFormat)) {
+                        ForEach(ReportExportFormat.allCases) { format in
+                            Text(format.title).tag(format)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(preferences.configuration.reportExportFormat.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            sectionSurface(title: "Первый запуск и сервис", subtitle: "Повторный запуск приветствия, версия и продуктовая информация") {
+                HStack(spacing: 10) {
+                    Button("Повторить приветствие") {
+                        showOnboarding = true
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("О MacPulse") {
+                        showAboutSheet = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Text("История и события сохраняются локально между перезапусками. Закрытие окна центра управления больше не завершает индикатор в строке меню.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -782,7 +907,7 @@ struct ControlCenterWindowView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Toggle("Адаптивное замедление на батарее и в low power mode", isOn: preferences.binding(\.adaptiveRefresh))
+                Toggle("Адаптивное замедление на батарее и в режиме энергосбережения", isOn: preferences.binding(\.adaptiveRefresh))
             }
 
             sectionSurface(title: "Визуальный стиль", subtitle: "Системные материалы и цветовая логика как у macOS") {
@@ -843,9 +968,10 @@ struct ControlCenterWindowView: View {
         )
     }
 
-    private func summaryBadge(_ title: String) -> some View {
+    private func summaryBadge(_ title: String, tint: Color? = nil) -> some View {
         Text(title)
             .font(.caption.weight(.semibold))
+            .foregroundStyle(tint ?? .primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
@@ -854,7 +980,7 @@ struct ControlCenterWindowView: View {
             )
             .overlay(
                 Capsule(style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                    .stroke((tint ?? .primary).opacity(0.14), lineWidth: 1)
             )
     }
 
@@ -1060,6 +1186,19 @@ struct ControlCenterWindowView: View {
         }
     }
 
+    private func handleAppear() {
+        ensureSelection()
+
+        if !preferences.configuration.hasCompletedOnboarding {
+            showOnboarding = true
+        }
+
+        Task {
+            _ = await notificationCoordinator.refreshAuthorizationStatus()
+            launchAtLoginController.refresh()
+        }
+    }
+
     private func run(helper: CleanupHelper) {
         switch helper.kind {
         case .openActivityMonitor:
@@ -1075,16 +1214,19 @@ struct ControlCenterWindowView: View {
                 _ = SystemActionCenter.reveal(process: process)
             }
         case .exportReport:
-            _ = SystemActionCenter.exportReport(monitor.makeHealthReport())
+            _ = SystemActionCenter.exportReport(
+                monitor.makeHealthReport(),
+                format: preferences.configuration.reportExportFormat
+            )
         }
     }
 
     private var availableSections: [ControlCenterSection] {
         switch preferences.configuration.experienceMode {
         case .basic:
-            [.overview, .battery, .menuBar, .appearance]
+            [.overview, .battery, .app, .menuBar, .appearance]
         case .smart:
-            [.overview, .insights, .trends, .processes, .battery, .menuBar, .appearance]
+            [.overview, .insights, .trends, .processes, .battery, .app, .menuBar, .appearance]
         case .pro:
             ControlCenterSection.allCases
         }
@@ -1240,6 +1382,42 @@ struct ControlCenterWindowView: View {
         return "macOS пока не дала расчет времени"
     }
 
+    private var notificationBinding: Binding<Bool> {
+        Binding(
+            get: { preferences.configuration.notificationsEnabled },
+            set: { enabled in
+                Task {
+                    await setNotificationsEnabled(enabled)
+                }
+            }
+        )
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginController.state.isEnabledLike },
+            set: { enabled in
+                Task {
+                    await launchAtLoginController.setEnabled(enabled)
+                }
+            }
+        )
+    }
+
+    private func setNotificationsEnabled(_ enabled: Bool) async {
+        var updated = preferences.configuration
+
+        if enabled {
+            let granted = await notificationCoordinator.requestAuthorizationIfNeeded()
+            updated.notificationsEnabled = granted
+        } else {
+            updated.notificationsEnabled = false
+        }
+
+        preferences.configuration = updated
+        _ = await notificationCoordinator.refreshAuthorizationStatus()
+    }
+
     private func average(_ values: [Double]) -> Double? {
         Formatting.average(values)
     }
@@ -1256,6 +1434,21 @@ struct ControlCenterWindowView: View {
             .orange
         case .high, .critical:
             .red
+        }
+    }
+
+    private var thermalTint: Color {
+        switch monitor.snapshot.thermal.condition {
+        case .nominal:
+            .green
+        case .fair:
+            .yellow
+        case .serious:
+            .orange
+        case .critical:
+            .red
+        case .unknown:
+            .secondary
         }
     }
 
@@ -1284,6 +1477,36 @@ struct ControlCenterWindowView: View {
 
     private func liveBytes(_ value: UInt64) -> String {
         isAwaitingFirstSnapshot ? "—" : Formatting.bytes(value)
+    }
+
+    private var memoryStatusBadgeTitle: String? {
+        guard !isAwaitingFirstSnapshot else { return nil }
+
+        switch monitor.snapshot.memory.pressureLevel {
+        case .normal:
+            return nil
+        case .elevated:
+            return "Давление памяти повышено"
+        case .high:
+            return "Давление памяти высокое"
+        case .critical:
+            return "Давление памяти критичное"
+        }
+    }
+
+    private var thermalStatusBadgeTitle: String? {
+        guard !isAwaitingFirstSnapshot else { return nil }
+
+        switch monitor.snapshot.thermal.condition {
+        case .nominal, .unknown:
+            return nil
+        case .fair:
+            return "Температура повышена"
+        case .serious:
+            return "Температура высокая"
+        case .critical:
+            return "Температура критичная"
+        }
     }
 
     private func liveTemperature(_ value: Double?) -> String {

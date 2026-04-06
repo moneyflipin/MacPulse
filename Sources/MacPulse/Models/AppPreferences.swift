@@ -324,6 +324,40 @@ enum TrendWindow: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum ReportExportFormat: String, CaseIterable, Codable, Identifiable, Sendable {
+    case plainText
+    case markdown
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .plainText:
+            "TXT"
+        case .markdown:
+            "Markdown"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .plainText:
+            "Обычный текстовый отчет"
+        case .markdown:
+            "Более читаемый отчет с заголовками"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .plainText:
+            "txt"
+        case .markdown:
+            "md"
+        }
+    }
+}
+
 struct AppConfiguration: Codable, Equatable, Sendable {
     var experienceMode: ExperienceMode = .smart
     var menuBarMode: MenuBarMode = .balanced
@@ -336,6 +370,10 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var trendWindow: TrendWindow = .medium
     var showRawSensorNames = false
     var appearanceMode: AppearanceMode = .system
+    var notificationsEnabled = false
+    var showControlCenterOnLaunch = true
+    var hasCompletedOnboarding = false
+    var reportExportFormat: ReportExportFormat = .plainText
 }
 
 @MainActor

@@ -94,7 +94,7 @@ enum SensorGroup: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum MemoryPressureLevel: String, CaseIterable, Sendable {
+enum MemoryPressureLevel: String, CaseIterable, Codable, Sendable {
     case normal
     case elevated
     case high
@@ -474,7 +474,7 @@ struct SystemSnapshot: Sendable {
     )
 }
 
-struct MetricHistoryPoint: Identifiable, Sendable {
+struct MetricHistoryPoint: Identifiable, Codable, Sendable {
     let timestamp: Date
     let cpuUsage: Double
     let memoryUsage: Double

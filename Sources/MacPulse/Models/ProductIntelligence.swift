@@ -100,7 +100,7 @@ struct CleanupHelper: Identifiable, Sendable {
     let targetProcess: ProcessResource?
 }
 
-struct SystemEvent: Identifiable, Sendable {
+struct SystemEvent: Identifiable, Codable, Sendable {
     let timestamp: Date
     let title: String
     let detail: String
@@ -345,6 +345,34 @@ enum ProductIntelligence {
         configuration: AppConfiguration,
         insights: [SmartInsight],
         profiles: [AppResourceProfile],
+        events: [SystemEvent],
+        format: ReportExportFormat
+    ) -> String {
+        switch format {
+        case .plainText:
+            return plainTextReport(
+                snapshot: snapshot,
+                configuration: configuration,
+                insights: insights,
+                profiles: profiles,
+                events: events
+            )
+        case .markdown:
+            return markdownReport(
+                snapshot: snapshot,
+                configuration: configuration,
+                insights: insights,
+                profiles: profiles,
+                events: events
+            )
+        }
+    }
+
+    private static func plainTextReport(
+        snapshot: SystemSnapshot,
+        configuration: AppConfiguration,
+        insights: [SmartInsight],
+        profiles: [AppResourceProfile],
         events: [SystemEvent]
     ) -> String {
         let header = """
@@ -392,6 +420,64 @@ enum ProductIntelligence {
             "Последние события:",
             eventsBlock.isEmpty ? "- нет" : eventsBlock,
         ].joined(separator: "\n")
+    }
+
+    private static func markdownReport(
+        snapshot: SystemSnapshot,
+        configuration: AppConfiguration,
+        insights: [SmartInsight],
+        profiles: [AppResourceProfile],
+        events: [SystemEvent]
+    ) -> String {
+        let batteryLine = snapshot.battery.map {
+            let cycles = $0.cycleCount.map(String.init) ?? "нет"
+            let wear = $0.wearPercent.map { Formatting.percent($0, decimals: 0) } ?? "нет"
+            let power = $0.powerLabel ?? "питание не определено"
+            let time = $0.timeEstimateLabel ?? "время не определено"
+            return "- Батарея: \(Formatting.percent($0.percentage)), \($0.statusTitle), \(power), \(time), циклы \(cycles), износ \(wear)"
+        } ?? "- Батарея: нет встроенной батареи"
+
+        let insightLines = insights.isEmpty
+            ? "- нет"
+            : insights.map { "- [\($0.severity.title)] \($0.title): \($0.summary)" }.joined(separator: "\n")
+        let profileLines = profiles.prefix(5).isEmpty
+            ? "- нет"
+            : profiles.prefix(5).map {
+                "- \($0.displayName): avg CPU \(Formatting.percent($0.averageCPU, decimals: 1)), peak CPU \(Formatting.percent($0.peakCPU, decimals: 1)), peak RAM \(Formatting.bytes($0.peakMemoryBytes))"
+            }.joined(separator: "\n")
+        let eventLines = events.prefix(8).isEmpty
+            ? "- нет"
+            : events.prefix(8).map {
+                "- \($0.timestamp.formatted(date: .omitted, time: .shortened)) [\($0.severity.title)] \($0.title): \($0.detail)"
+            }.joined(separator: "\n")
+
+        return """
+        # MacPulse Report
+
+        - Дата: \(snapshot.timestamp.formatted(date: .abbreviated, time: .standard))
+        - Режим: \(configuration.monitoringProfile.title)
+        - Интерфейс: \(configuration.experienceMode.title)
+
+        ## Система
+
+        - CPU: \(Formatting.percent(snapshot.cpu.usagePercent)) (user \(Formatting.percent(snapshot.cpu.userPercent)), system \(Formatting.percent(snapshot.cpu.systemPercent)))
+        - Memory: \(Formatting.bytes(snapshot.memory.usedBytes)) / \(Formatting.bytes(snapshot.memory.totalBytes)), swap \(Formatting.bytes(snapshot.memory.swapUsedBytes)), pressure \(snapshot.memory.pressureLevel.title)
+        - Disk: свободно \(Formatting.bytes(snapshot.disk.freeBytes)) из \(Formatting.bytes(snapshot.disk.totalBytes))
+        - Thermal: \(snapshot.thermal.condition.title), основная температура \(snapshot.thermal.primaryTemperatureCelsius.map(Formatting.temperature) ?? "нет")
+        \(batteryLine)
+
+        ## Инсайты
+
+        \(insightLines)
+
+        ## Профили приложений
+
+        \(profileLines)
+
+        ## Последние события
+
+        \(eventLines)
+        """
     }
 
     private static func batteryHeadline(for score: Int) -> String {

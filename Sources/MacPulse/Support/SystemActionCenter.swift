@@ -41,10 +41,10 @@ enum SystemActionCenter {
     }
 
     @discardableResult
-    static func exportReport(_ content: String) -> Bool {
+    static func exportReport(_ content: String, format: ReportExportFormat) -> Bool {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.plainText]
-        panel.nameFieldStringValue = "MacPulse Report \(Date.now.formatted(date: .numeric, time: .omitted)).txt"
+        panel.allowedContentTypes = [contentType(for: format)]
+        panel.nameFieldStringValue = "Отчет MacPulse \(Date.now.formatted(date: .numeric, time: .omitted)).\(format.fileExtension)"
         panel.canCreateDirectories = true
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -56,6 +56,15 @@ enum SystemActionCenter {
             return true
         } catch {
             return false
+        }
+    }
+
+    private static func contentType(for format: ReportExportFormat) -> UTType {
+        switch format {
+        case .plainText:
+            .plainText
+        case .markdown:
+            UTType(filenameExtension: "md") ?? .plainText
         }
     }
 }

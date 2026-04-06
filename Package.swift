@@ -23,6 +23,8 @@ let package = Package(
             dependencies: ["MacPulseBridge"],
             linkerSettings: [
                 .linkedFramework("IOKit"),
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("UserNotifications"),
             ]
         ),
     ],
